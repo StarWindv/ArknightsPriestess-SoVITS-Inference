@@ -1,0 +1,9 @@
+output/*
+[t/T]emp
+__pycache__
+
+# Big Files
+*.pt
+*.pth
+*.ckpt
+*.bin
