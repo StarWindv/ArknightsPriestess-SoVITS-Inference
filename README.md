@@ -10,7 +10,7 @@
 
 普瑞赛斯声线模型请自行训练, 或者使用 [B站视频](https://b23.tv/W1E3hML) 大佬开源的已训练好的模型
 
-环境: Python 3.10 (必须低于3.13, 因为aifc在3.13被废弃了会很麻烦)
+环境: Python 3.10 (必须低于3.13, 因为`aifc`在3.13被废弃了会很麻烦)
 
 依赖: 请查看原项目, 此处不赘述
 
@@ -25,17 +25,22 @@ w/word <str> 也就是目标合成文本
 
 ---
 
-[Optional Arguments]                | [Default]        | [Choices]
+[Optional Arguments]                | [Default]        | [Choices]                           | [Description]
 
--s/--sampling                 <int> | 64               | { x | x ∈  4, 8, 16, 32, 64, 128 }
--o/--output-path              <str> | workspace/output/{yy-MM-dd}/{word}.wav
--tk/--topk                    <int> | 5                | { x | x >= 1, x <= 100 }
--tp/--topp                    <int> | 1                | { x | x >= 0, x <= 1 }
--t/--temperature              <int> | 1                | { x | x >= 0, x <= 1 }
--b/--batch-size               <int> | 20               | { x | x >= 1, x <= 200 }
--p/--paragraph-separation   <float> | 0.3              | { x | x >= 0.01, x <= 1}
--rp/--repetition-punishment <float> | 1.35             | { x | x >= 0, x <= 2 }
--r/--speech-rate            <float> | 1                | { x | x >= 0.6, x <= 1.65}
--l/--language                 <str> | JP               | EN, CN, JP, KOR
--r/--random-seed              <int> | Random
+-s/--sampling                 <int> | 64               | { x | x ∈  4, 8, 16, 32, 64, 128 } |
+-o/--output-path              <str> | workspace/output/{yy-MM-dd}/{word}.wav                 |
+-tk/--topk                    <int> | 5                | { x | x >= 1, x <= 100 }            |
+-tp/--topp                    <int> | 1                | { x | x >= 0, x <= 1 }              |
+-t/--temperature              <int> | 1                | { x | x >= 0, x <= 1 }              |
+-b/--batch-size               <int> | 20               | { x | x >= 1, x <= 200 }            |
+-p/--paragraph-separation   <float> | 0.3              | { x | x >= 0.01, x <= 1}            |
+-rp/--repetition-punishment <float> | 1.35             | { x | x >= 0, x <= 2 }              |
+-r/--speech-rate            <float> | 1                | { x | x >= 0.6, x <= 1.65}          |
+-l/--language                 <str> | JP               | EN, CN, JP, KOR                     |
+-r/--random-seed              <int> | Random           |                                     |
+-f/--words-file-path <str>          | None             | None                                | 输入一个文件路径, 使模型按文件合成音频  , 保存到 {output_dir}/{filename}.wav 中
+-d/--words-file-dir  <str>          | None             | None                                | 输入一个文件夹路径, 使模型逐文件合成音频, 依次保存到 {output_dir}/{dir_name}/{filename}.wav
+
 ```
+
+注意, 此处语言选项默认为 JP 是因为, 本项目声明的模型训练时多数用的是日语素材, 并且此处提供的参考音频也是日语, 故默认为日语, 与政治无任何关系
