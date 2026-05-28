@@ -50,7 +50,7 @@ LANG_MAP = {
 }
 
 # Cut method mapping
-CUT_METHOD = "cut5"  # 凑四句一切
+CUT_METHOD = "cut5"  # 按标点符号切分
 
 
 def parse_args():
