@@ -63,14 +63,33 @@ Examples:
   python interface.py "Hello World" -l EN -s 32
   python interface.py "text" -l CN -tk 10 -tp 0.9
   python interface.py "text" -l KOR -o output.wav
+  python interface.py -f input.txt
+  python interface.py -d texts_dir
         """
     )
     
-    # Required arguments
+    # Required arguments (word is optional when -f or -d is used)
     parser.add_argument(
         "word",
         type=str,
-        help="Target text to synthesize"
+        nargs="?",
+        default=None,
+        help="Target text to synthesize (optional if -f or -d is used)"
+    )
+    
+    # File/directory input arguments
+    parser.add_argument(
+        "-f", "--words-file-path",
+        type=str,
+        default=None,
+        help="Input file path for batch synthesis (saves to {output_dir}/{filename}.wav)"
+    )
+    
+    parser.add_argument(
+        "-d", "--words-file-dir",
+        type=str,
+        default=None,
+        help="Input directory path for batch synthesis (saves to {output_dir}/{dir_name}/{filename}.wav)"
     )
     
     # Optional arguments
@@ -155,6 +174,10 @@ Examples:
     
     args = parser.parse_args()
     
+    # Validate that at least one input source is provided
+    if args.word is None and args.words_file_path is None and args.words_file_dir is None:
+        parser.error("Must provide either 'word', -f/--words-file-path, or -d/--words-file-dir")
+    
     # Validate arguments
     if not 1 <= args.topk <= 100:
         parser.error("topk must be between 1 and 100")
@@ -226,24 +249,150 @@ def initialize_tts():
     return tts_pipeline
 
 
-def run_inference(tts_pipeline, args, main_ref_path, sub_ref_paths, prompt_text):
+def get_output_path(args):
     """
-    Run TTS inference.
+    Get the output file path for direct text input.
+    
+    Args:
+        args: Parsed command line arguments
+    
+    Returns:
+        str: Output file path
+    """
+    if args.output_path:
+        return args.output_path
+    
+    date_str = datetime.now().strftime("%y-%m-%d")
+    clean_word = re.sub(r'[\\/:*?"<>|]', '_', args.word)
+    if len(clean_word) > 50:
+        clean_word = clean_word[:50]
+    
+    output_dir = os.path.join(WORKSPACE_DIR, "output", date_str)
+    return os.path.join(output_dir, f"{clean_word}.wav")
+
+
+def get_file_output_path(file_path, output_base_dir=None):
+    """
+    Get output path for file-based synthesis.
+    
+    Args:
+        file_path: Path to the input text file
+        output_base_dir: Base output directory (default: workspace/output/{yy-MM-dd})
+    
+    Returns:
+        str: Output file path
+    """
+    date_str = datetime.now().strftime("%y-%m-%d")
+    
+    if output_base_dir is None:
+        output_base_dir = os.path.join(WORKSPACE_DIR, "output", date_str)
+    
+    filename = os.path.splitext(os.path.basename(file_path))[0]
+    clean_filename = re.sub(r'[\\/:*?"<>|]', '_', filename)
+    
+    return os.path.join(output_base_dir, f"{clean_filename}.wav")
+
+
+def get_dir_output_path(file_path, dir_path, output_base_dir=None):
+    """
+    Get output path for directory-based synthesis.
+    
+    Args:
+        file_path: Path to the input text file
+        dir_path: Path to the input directory
+        output_base_dir: Base output directory (default: workspace/output/{yy-MM-dd})
+    
+    Returns:
+        str: Output file path
+    """
+    date_str = datetime.now().strftime("%y-%m-%d")
+    
+    if output_base_dir is None:
+        output_base_dir = os.path.join(WORKSPACE_DIR, "output", date_str)
+    
+    dir_name = os.path.basename(os.path.abspath(dir_path))
+    filename = os.path.splitext(os.path.basename(file_path))[0]
+    clean_dir_name = re.sub(r'[\\/:*?"<>|]', '_', dir_name)
+    clean_filename = re.sub(r'[\\/:*?"<>|]', '_', filename)
+    
+    return os.path.join(output_base_dir, clean_dir_name, f"{clean_filename}.wav")
+
+
+def save_audio(audio, sr, output_path):
+    """
+    Save audio to file.
+    
+    Args:
+        audio: Audio data as numpy array
+        sr: Sampling rate
+        output_path: Output file path
+    """
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    
+    if isinstance(audio, np.ndarray):
+        audio_tensor = torch.from_numpy(audio).float()
+        if audio_tensor.max() > 1.0 or audio_tensor.min() < -1.0:
+            audio_tensor = audio_tensor / 32768.0
+    else:
+        audio_tensor = audio
+    
+    torchaudio.save(output_path, audio_tensor.unsqueeze(0), sr)
+    print(f"Audio saved to: {output_path}")
+
+
+def read_text_file(file_path):
+    """
+    Read text content from a file.
+    If the first line is exactly a language code (EN/CN/JP/KOR), use that language.
+    Otherwise, treat the entire content as text with no language override.
+    
+    Args:
+        file_path: Path to the text file
+    
+    Returns:
+        tuple: (text_content, language_code_or_None)
+    """
+    with open(file_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    
+    if not lines:
+        return "", None
+    
+    # Check if first line is exactly a language code
+    first_line = lines[0].strip()
+    if first_line in LANG_MAP:
+        # First line is a language code, rest is text
+        text = "".join(lines[1:]).strip()
+        return text, first_line
+    else:
+        # First line is not a language code, entire content is text
+        text = "".join(lines).strip()
+        return text, None
+
+
+def run_inference_with_text(tts_pipeline, text, args, main_ref_path, sub_ref_paths, prompt_text, language=None):
+    """
+    Run TTS inference with given text.
     
     Args:
         tts_pipeline: Initialized TTS pipeline
+        text: Text to synthesize
         args: Parsed command line arguments
         main_ref_path: Path to main reference audio
         sub_ref_paths: List of paths to sub reference audio files
         prompt_text: Text of the reference audio
+        language: Language code override (e.g., "JP", "CN", "EN", "KOR") or None to use args.language
     
     Returns:
         tuple: (sampling_rate, audio_data)
     """
+    # Use provided language or fall back to args.language
+    lang = language if language is not None else args.language
+    
     # Prepare inputs
     inputs = {
-        "text": args.word,
-        "text_lang": LANG_MAP[args.language],
+        "text": text,
+        "text_lang": LANG_MAP[lang],
         "ref_audio_path": main_ref_path,
         "aux_ref_audio_paths": sub_ref_paths,
         "prompt_text": prompt_text,
@@ -264,8 +413,8 @@ def run_inference(tts_pipeline, args, main_ref_path, sub_ref_paths, prompt_text)
         "super_sampling": True,  # Enabled by default (will only work for v3)
     }
     
-    print(f"\nSynthesizing text: {args.word}")
-    print(f"Language: {args.language}")
+    print(f"\nSynthesizing text: {text}")
+    print(f"Language: {lang}")
     print(f"Reference audio: {main_ref_path}")
     print(f"Sub references: {len(sub_ref_paths)} files")
     print(f"Sampling steps: {args.sampling}")
@@ -273,63 +422,15 @@ def run_inference(tts_pipeline, args, main_ref_path, sub_ref_paths, prompt_text)
     print(f"Random seed: {'Random' if args.random_seed == -1 else args.random_seed}")
     
     # Run inference
+    print("Starting inference...")
+    sr, audio = None, None
     for sr, audio in tts_pipeline.run(inputs):
-        return sr, audio
+        print(f"Inference chunk received: sr={sr}, audio_shape={audio.shape if hasattr(audio, 'shape') else 'N/A'}")
     
-    return None, None
-
-
-def save_audio(audio, sr, output_path):
-    """
-    Save audio to file.
+    if sr is not None and audio is not None:
+        print(f"Inference completed: sr={sr}, audio_length={len(audio)}")
     
-    Args:
-        audio: Audio data as numpy array
-        sr: Sampling rate
-        output_path: Output file path
-    """
-    # Create output directory if it doesn't exist
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    # Convert to torch tensor and save
-    if isinstance(audio, np.ndarray):
-        audio_tensor = torch.from_numpy(audio).float()
-        # Normalize if needed
-        if audio_tensor.max() > 1.0 or audio_tensor.min() < -1.0:
-            audio_tensor = audio_tensor / 32768.0
-    else:
-        audio_tensor = audio
-    
-    # Save using torchaudio
-    torchaudio.save(output_path, audio_tensor.unsqueeze(0), sr)
-    print(f"\nAudio saved to: {output_path}")
-
-
-def get_output_path(args):
-    """
-    Get the output file path.
-    
-    Args:
-        args: Parsed command line arguments
-    
-    Returns:
-        str: Output file path
-    """
-    if args.output_path:
-        return args.output_path
-    
-    # Generate default output path
-    date_str = datetime.now().strftime("%y-%m-%d")
-    # Clean the word for filename (remove special characters)
-    clean_word = re.sub(r'[\\/:*?"<>|]', '_', args.word)
-    # Truncate if too long
-    if len(clean_word) > 50:
-        clean_word = clean_word[:50]
-    
-    output_dir = os.path.join(WORKSPACE_DIR, "output", date_str)
-    output_path = os.path.join(output_dir, f"{clean_word}.wav")
-    
-    return output_path
+    return sr, audio
 
 
 def main():
@@ -356,20 +457,88 @@ def main():
         # Initialize TTS pipeline
         tts_pipeline = initialize_tts()
         
-        # Run inference
-        sr, audio = run_inference(tts_pipeline, args, main_ref_path, sub_ref_paths, prompt_text)
-        
-        if audio is not None:
-            # Get output path
-            output_path = get_output_path(args)
+        # Handle different input modes
+        if args.words_file_dir is not None:
+            # Directory mode: process all .txt files in directory
+            dir_path = args.words_file_dir
+            if not os.path.isdir(dir_path):
+                print(f"Error: Directory not found: {dir_path}")
+                sys.exit(1)
             
-            # Save audio
-            save_audio(audio, sr, output_path)
+            txt_files = sorted(glob.glob(os.path.join(dir_path, "*.txt")))
+            if not txt_files:
+                print(f"Error: No .txt files found in {dir_path}")
+                sys.exit(1)
             
-            print("\nSynthesis completed successfully!")
+            print(f"\nProcessing {len(txt_files)} files from directory: {dir_path}")
+            
+            for i, file_path in enumerate(txt_files, 1):
+                print(f"\n[{i}/{len(txt_files)}] Processing: {os.path.basename(file_path)}")
+                text, file_lang = read_text_file(file_path)
+                if not text:
+                    print(f"  Skipping empty file: {file_path}")
+                    continue
+                
+                # Use file's language if specified, otherwise use args.language
+                effective_lang = file_lang if file_lang is not None else args.language
+                if file_lang is not None:
+                    print(f"  File language: {file_lang} (overrides -l {args.language})")
+                
+                sr, audio = run_inference_with_text(
+                    tts_pipeline, text, args, main_ref_path, sub_ref_paths, prompt_text, language=effective_lang
+                )
+                
+                if audio is not None:
+                    output_path = get_dir_output_path(file_path, dir_path, args.output_path)
+                    save_audio(audio, sr, output_path)
+                else:
+                    print(f"  Failed to synthesize: {file_path}")
+            
+            print(f"\nBatch synthesis completed! Processed {len(txt_files)} files.")
+            
+        elif args.words_file_path is not None:
+            # File mode: process single file
+            file_path = args.words_file_path
+            if not os.path.isfile(file_path):
+                print(f"Error: File not found: {file_path}")
+                sys.exit(1)
+            
+            print(f"\nProcessing file: {file_path}")
+            text, file_lang = read_text_file(file_path)
+            if not text:
+                print("Error: File is empty")
+                sys.exit(1)
+            
+            # Use file's language if specified, otherwise use args.language
+            effective_lang = file_lang if file_lang is not None else args.language
+            if file_lang is not None:
+                print(f"File language: {file_lang} (overrides -l {args.language})")
+            
+            sr, audio = run_inference_with_text(
+                tts_pipeline, text, args, main_ref_path, sub_ref_paths, prompt_text, language=effective_lang
+            )
+            
+            if audio is not None:
+                output_path = get_file_output_path(file_path, args.output_path)
+                save_audio(audio, sr, output_path)
+                print("\nSynthesis completed successfully!")
+            else:
+                print("\nSynthesis failed: No audio output generated.")
+                sys.exit(1)
+                
         else:
-            print("\nSynthesis failed: No audio output generated.")
-            sys.exit(1)
+            # Direct text mode
+            sr, audio = run_inference_with_text(
+                tts_pipeline, args.word, args, main_ref_path, sub_ref_paths, prompt_text
+            )
+            
+            if audio is not None:
+                output_path = get_output_path(args)
+                save_audio(audio, sr, output_path)
+                print("\nSynthesis completed successfully!")
+            else:
+                print("\nSynthesis failed: No audio output generated.")
+                sys.exit(1)
             
     except KeyboardInterrupt:
         print("\n\nSynthesis interrupted by user.")
