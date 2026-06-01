@@ -166,6 +166,14 @@ Examples:
     )
     
     parser.add_argument(
+        "-rl", "--refs-lang",
+        type=str,
+        default="JP",
+        choices=["EN", "CN", "JP", "KOR"],
+        help="Language of the reference audio (default: JP, must match the reference audio filename language)"
+    )
+    
+    parser.add_argument(
         "--random-seed",
         type=int,
         default=-1,
@@ -197,9 +205,12 @@ Examples:
     return args
 
 
-def get_ref_audio_info():
+def get_ref_audio_info(prompt_lang="all_ja"):
     """
     Get reference audio information from the refs directory.
+    
+    Args:
+        prompt_lang: Language code for the prompt text (default: "all_ja")
     
     Returns:
         tuple: (main_ref_path, sub_ref_paths, prompt_text, prompt_lang)
@@ -219,7 +230,7 @@ def get_ref_audio_info():
     # Get sub reference audio files
     sub_files = glob.glob(os.path.join(sub_dir, "*.wav"))
     
-    return main_ref_path, sub_files, prompt_text, "all_ja"
+    return main_ref_path, sub_files, prompt_text, prompt_lang
 
 
 def initialize_tts():
@@ -370,7 +381,7 @@ def read_text_file(file_path):
         return text, None
 
 
-def run_inference_with_text(tts_pipeline, text, args, main_ref_path, sub_ref_paths, prompt_text, language=None):
+def run_inference_with_text(tts_pipeline, text, args, main_ref_path, sub_ref_paths, prompt_text, prompt_lang="all_ja", language=None):
     """
     Run TTS inference with given text.
     
@@ -381,6 +392,7 @@ def run_inference_with_text(tts_pipeline, text, args, main_ref_path, sub_ref_pat
         main_ref_path: Path to main reference audio
         sub_ref_paths: List of paths to sub reference audio files
         prompt_text: Text of the reference audio
+        prompt_lang: Language code for the prompt text (default: "all_ja")
         language: Language code override (e.g., "JP", "CN", "EN", "KOR") or None to use args.language
     
     Returns:
@@ -396,7 +408,7 @@ def run_inference_with_text(tts_pipeline, text, args, main_ref_path, sub_ref_pat
         "ref_audio_path": main_ref_path,
         "aux_ref_audio_paths": sub_ref_paths,
         "prompt_text": prompt_text,
-        "prompt_lang": "all_ja",  # Reference language is always JP
+        "prompt_lang": prompt_lang,
         "top_k": args.topk,
         "top_p": args.topp,
         "temperature": args.temperature,
@@ -452,7 +464,8 @@ def main():
     try:
         # Get reference audio information
         print("Loading reference audio information...")
-        main_ref_path, sub_ref_paths, prompt_text, prompt_lang = get_ref_audio_info()
+        prompt_lang = LANG_MAP[args.refs_lang]
+        main_ref_path, sub_ref_paths, prompt_text, prompt_lang = get_ref_audio_info(prompt_lang)
         
         # Initialize TTS pipeline
         tts_pipeline = initialize_tts()
@@ -485,7 +498,7 @@ def main():
                     print(f"  File language: {file_lang} (overrides -l {args.language})")
                 
                 sr, audio = run_inference_with_text(
-                    tts_pipeline, text, args, main_ref_path, sub_ref_paths, prompt_text, language=effective_lang
+                    tts_pipeline, text, args, main_ref_path, sub_ref_paths, prompt_text, prompt_lang=prompt_lang, language=effective_lang
                 )
                 
                 if audio is not None:
@@ -515,7 +528,7 @@ def main():
                 print(f"File language: {file_lang} (overrides -l {args.language})")
             
             sr, audio = run_inference_with_text(
-                tts_pipeline, text, args, main_ref_path, sub_ref_paths, prompt_text, language=effective_lang
+                tts_pipeline, text, args, main_ref_path, sub_ref_paths, prompt_text, prompt_lang=prompt_lang, language=effective_lang
             )
             
             if audio is not None:
@@ -529,7 +542,7 @@ def main():
         else:
             # Direct text mode
             sr, audio = run_inference_with_text(
-                tts_pipeline, args.word, args, main_ref_path, sub_ref_paths, prompt_text
+                tts_pipeline, args.word, args, main_ref_path, sub_ref_paths, prompt_text, prompt_lang=prompt_lang
             )
             
             if audio is not None:
